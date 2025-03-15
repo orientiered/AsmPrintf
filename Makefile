@@ -1,5 +1,5 @@
 main.exe: build/printf.o build/main.o
-	g++ -o $@  $^ 
+	gcc -no-pie -o $@  $^ 
 	objdump -D main.exe > main.disasm 
 
 build/printf.o: printf.s

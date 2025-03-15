@@ -1,10 +1,14 @@
 #include <stdio.h>
 
-#define _cdecl __attribute__((cdecl))
+// #define _cdecl __attribute__((cdecl))
 
-extern "C" int _cdecl my_printf(const char *fmt, ...);
+extern "C" int my_printf(const char *fmt, ...);
 
 int main() {
-    printf("hi %d\n", my_printf("Jeep\n", 1, 2, 3, 4, 5, 6, 7) );
+    int printed_chars = my_printf("1:%s 2:%s 3:%s 4:%s 5:%s 6:%s argument from stack 7:%s\n", 
+    "first", "second", "third", "fourth", "fifth", "sixth", "seventh");
+    printf("Printed chars: %d\n", printed_chars);
+    // printf("\n%d\n", my_printf("Ded obed %s ded, %s\n", "lox", "gorox") );
+    printf("Amogus:\n%");
     return 0;
 }
