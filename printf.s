@@ -83,10 +83,19 @@ my_printf_cdecl:
             cmp sil, 'z' - 'a'
             ja .spec_none  ; spec > 'z'
 
+        ; preambule
+            inc rdi
+            mov r15, rdi    ; skipping specifier symbol and saving rdi
+
+            add rbp, 8      ; getting new argument from stack
+            mov rdi, [rbp+8]
+
+            push .epilogue  ; return address
 
             jmp printfSwitchJmpTable[rsi*8]    ; switch
 
-
+            ;---------------------------------------------------------------
+            ; this case is handled separately (not presented in jmp table) 
             .spec_percent:          ; %%
                 call printf_putc    ; writing %
                 inc  r12
@@ -94,70 +103,39 @@ my_printf_cdecl:
                 
                 jmp  .print_loop
 
+            .spec_none:
+                jmp .loop_end   ; unsoppurted specifier stops printing
+            ;---------------------------------------------------------------
+
             .spec_string:           ; %s
-                inc  rdi
-                mov  r15, rdi       ; saving rdi
-
-                add  rbp, 8         ; getting new argument from stack
-                mov  rdi, [rbp+8]   ; string ptr
-                call printf_string  ; printing string
-
-                mov  rdi, r15       ; restoring rdi
-                add  r12, rax       ; adding rax printed characters to rcx
-                jmp  .print_loop
+                jmp printf_string  ; printing string
 
             .spec_char:             ; %c
-                inc  rdi
-
-                add  rbp, 8         ; getting new argument
-                mov  sil, [rbp + 8] ; char
-                call printf_putc    ; writing it to the buffer
-
-                inc  r12
-                jmp  .print_loop
+                mov  sil, dil       ; char
+                jmp  printf_putc    ; writing it to the buffer
 
             .spec_decimal:
-                mov  r15, rdi
+                jmp printf_decimal
 
-                add  rbp, 8
-                mov  rdi, [rbp+8]
-                ; call printf_decimal
-
-                add  r12, rax
-                mov  rdi, r15
-                inc  rdi
-                jmp  .print_loop
-
-            ;--------
             .spec_hex:
                 mov  rcx, 4             ; 1 digit = 4 bits
-                jmp  .spec_base2n_number
+                jmp  printf_base2n
 
             .spec_octal:
                 mov  rcx, 3             ; 1 digit = 3 bits
-                jmp  .spec_base2n_number
+                jmp  printf_base2n
 
             .spec_binary:
                 mov  rcx, 1             ; 1 digit = 1 bit
-                jmp  .spec_base2n_number
+                jmp  printf_base2n
 
-            .spec_base2n_number:
-                mov  r15, rdi
 
-                add  rbp, 8
-                mov  rdi, [rbp+8]
-                call printf_base2n
 
-                mov  rdi, r15
-                inc  rdi
-                add  r12, rax
-
-                jmp  .print_loop 
-            ;--------
-
-            .spec_none:
-                jmp .loop_end   ; unsoppurted specifier stops printing
-
+        ;epilogue
+            .epilogue:
+            add  r12, rax   ; updating number of written symbols
+            mov  rdi, r15   ; restoring rdi
+            jmp .print_loop
 
     .loop_end:
 
@@ -244,6 +222,58 @@ printf_string:
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ;============================================================
+; Print decimal 32bit number from edi
+; Arg: edi - number 
+; Ret: rax - string len
+; Destr: syscall, rbx, r14, 13
+;============================================================
+printf_decimal:
+    xor  r13, r13
+
+    test edi, 0x80000000 ; checking sign bit 
+    jz   .unsigned
+    
+    neg  edi
+    mov  sil, '-'
+    call printf_putc    ; printing '-'
+    mov  r13, 1      ;
+
+
+    .unsigned:
+
+    mov  eax, edi
+    mov  rbx, 10
+    xor  r14, r14    ; r14 = 0 -> number of written symbols
+    xor  rdx, rdx
+
+    .unsigned_loop: 
+        div  rbx
+
+        ; rdx = rax % 10
+        ; rax = rax / 10
+        lea  rsi, [rdx+'0']
+        mov  BYTE numberBuffer[r14], sil
+        xor  rdx, rdx
+        inc  r14
+
+        test rax, rax
+        jnz .unsigned_loop
+    
+    mov  rcx, r14
+    .print_loop:
+        mov  sil, BYTE numberBuffer[rcx-1]
+        mov  rdi, rcx
+        call printf_putc
+        mov  rcx, rdi
+
+        loop .print_loop 
+
+
+    lea rax, [r13 + r14]
+    ret
+
+
+;============================================================
 ; Memncpy
 ; Arg: rdi - destination
 ;      rsi - source
@@ -315,7 +345,8 @@ printf_base2n:
 
 ;============================================================
 ; Puts character in printf buffer and flushes buffer if it is full
-; Arg: sil - char  
+; Arg: sil - char
+; Ret: rax - number of written chars (1)  
 ; Destr: syscall \ {rdi, rsi}
 ;============================================================
 printf_putc:
@@ -328,7 +359,7 @@ printf_putc:
     movzx rax, WORD [printfBufPos]
     inc  WORD [printfBufPos]
     mov  BYTE printfBuffer[rax], sil   ; write symbol to buffer
-    
+    mov  rax, 1
     ret
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
