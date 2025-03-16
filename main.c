@@ -9,7 +9,7 @@ int main() {
     int printed_chars = my_printf("7 + 18 = %d, %s %c %s = %d\n", 25, "7", '*', "-8", -56);
     // my_printf("%b = -%b, %o = -%o\n %x, %x\n", -52, 52, -52, 52, 0xEDA, 0x0BED); 
     printf("Printed chars: %d\n", printed_chars);
-
+    printed_chars = my_printf("int32_t(%u) = %d\n", -52, -52);
     // my_printf("12345678901234567890123456789012345678901234567890 %s\n", "qq");
 
     // my_printf("12345678901234567890123456789012345678901234567890 %s\n", "qqdfskldfjsklfjslkdfjslkdfjsdkf");

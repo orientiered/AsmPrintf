@@ -29,6 +29,7 @@ See [main.c](main.c) for more examples
 + `%o` - prints unsigned 32-bit integer in octal,  without leading zeros
 + `%b` - prints unsigned 32-bit integer in binary, without leading zeros
 + `%d` - prints signed   32-bit integer as decimal number
++ `%u` - prints unsigned 32-bit integer as decimal number
 + `%` with any other symbol stops printing  
 
 ## Under the hood

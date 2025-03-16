@@ -112,10 +112,14 @@ my_printf_cdecl:
 
             .spec_char:             ; %c
                 mov  sil, dil       ; char
+                inc  r12
                 jmp  printf_putc    ; writing it to the buffer
 
             .spec_decimal:
                 jmp printf_decimal
+
+            .spec_unsigned:
+                jmp printf_unsigned
 
             .spec_hex:
                 mov  rcx, 4             ; 1 digit = 4 bits
@@ -133,7 +137,6 @@ my_printf_cdecl:
 
         ;epilogue
             .epilogue:
-            add  r12, rax   ; updating number of written symbols
             mov  rdi, r15   ; restoring rdi
             jmp .print_loop
 
@@ -156,12 +159,13 @@ my_printf_cdecl:
 ;============================================================
 ; Print string from rdi
 ; Arg: rdi - string addr
-; Ret: rax - string len
-; Destr: syscall + r14 + r13 + rbx
+; Ret: r12 += number of chars written
+; Destr: syscall + r14 + rbx
 ;============================================================
 printf_string:
 
     call strlen   ; rax = strlen(rdi)
+    add  r12, rax 
     movzx rcx, WORD [printfBufPos]
 
     mov rbx, PRINTF_BUFFER_LEN
@@ -217,30 +221,41 @@ printf_string:
         syscall
 
         .end:
-        mov  rax, r14 ; restoring length in rax
         ret
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ;============================================================
 ; Print decimal 32bit number from edi
 ; Arg: edi - number 
-; Ret: rax - string len
-; Destr: syscall, rbx, r14, 13
+; Ret: r12 += numbers of characters written
+; Destr: syscall, rbx
 ;============================================================
 printf_decimal:
-    xor  r13, r13
 
     test edi, 0x80000000 ; checking sign bit 
-    jz   .unsigned
+    jz   printf_unsigned
     
     neg  edi
     mov  sil, '-'
     call printf_putc    ; printing '-'
-    mov  r13, 1      ;
+    inc  r12
 
 
-    .unsigned:
+    jmp printf_unsigned
 
+    ret
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+;============================================================
+; Print unsigned 32-bit integer
+;   edi - number
+;   r13 - expects to be 0 or 1 (if print_decimal printed -)
+; Ret:
+;   r12 += number of chars written
+; Destr: syscall, r14
+;============================================================
+printf_unsigned:
     mov  eax, edi
     mov  rbx, 10
     xor  r14, r14    ; r14 = 0 -> number of written symbols
@@ -260,6 +275,7 @@ printf_decimal:
         jnz .unsigned_loop
     
     mov  rcx, r14
+    add  r12, r14
     .print_loop:
         mov  sil, BYTE numberBuffer[rcx-1]
         mov  rdi, rcx
@@ -269,8 +285,9 @@ printf_decimal:
         loop .print_loop 
 
 
-    lea rax, [r13 + r14]
     ret
+
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
 ;============================================================
@@ -295,7 +312,7 @@ memncpy:
 ; Print unsigned number in hex, octal and binary
 ; Arg: edi - number
 ;      cl  - number of bits per digit
-; Ret: rax - number of printed chars 
+; Ret: r12 += number of printed chars 
 ; Destr: syscall, rbx, r14
 ;============================================================
 printf_base2n:
@@ -326,8 +343,8 @@ printf_base2n:
         jnz  .convert_loop
 
 
-    mov rcx, rax    ; loop index
-    mov rdi, rax    ; saving rax
+    add  r12, rax
+    mov  rcx, rax    ; loop index
     ; rcx > 0 
     .print_loop:
         mov  sil, BYTE numberBuffer[rcx-1]
@@ -337,7 +354,6 @@ printf_base2n:
 
         loop .print_loop
 
-    mov rax, rdi   ; return value = number of chars
     ret
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -420,8 +436,12 @@ section .rodata
     ; p q r
     dq 3  dup my_printf_cdecl.spec_none   ; default
     dq my_printf_cdecl.spec_string  ; s - string
-    ; t v u w
-    dq 4  dup my_printf_cdecl.spec_none   ; default
+    ; t  
+    dq my_printf_cdecl.spec_none   ; default
+    dq my_printf_cdecl.spec_unsigned ; u - unsigned
+    ; v w
+    dq 2  dup my_printf_cdecl.spec_none   ; default
+
     dq my_printf_cdecl.spec_hex     ; x - hexadecimal
     ; y z
     dq 2  dup my_printf_cdecl.spec_none
