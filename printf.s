@@ -32,9 +32,11 @@ my_printf:
 my_printf_cdecl:
     push rbp
     lea  rbp, 16[rsp]   ; caller ret address
+    push rbx
     push r12 ; we will store total number of written symbols in r12
     push r15 
     push r14
+    push r13
 
     ; for (const char *c = fmt; c; c++) {
     ;     if (*c != '%')
@@ -54,11 +56,15 @@ my_printf_cdecl:
     ; }
     mov rdi, [rbp+8] ;rdi = fmt
     xor r12, r12     ; r12 = 0
-    .print_loop:    
-        cmp  BYTE [rdi], 0
+    .print_loop:
+        mov  sil, BYTE [rdi] ; reading current char    
+        
+        cmp  sil, 0
         je   .loop_end      ; if c == 0 -> stop
-        cmp  BYTE [rdi], '%'
+        
+        cmp  sil, '%'
         je   .argument  
+        
         call printf_putc
         inc  rdi            ; c is not %
         inc  r12            
@@ -66,13 +72,26 @@ my_printf_cdecl:
 
         .argument:
             inc rdi
-            cmp BYTE [rdi], '%'
+            mov sil, BYTE [rdi]
+
+            cmp sil, '%'
             je .spec_percent
-            cmp BYTE [rdi], 's'
+
+            cmp sil, 's'
             je .spec_string
-            cmp BYTE [rdi], 'c'
+
+            cmp sil, 'c'
             je .spec_char
-            
+
+            cmp sil, 'x'
+            je .spec_hex
+
+            cmp sil, 'o'
+            je .spec_octal
+
+            cmp sil, 'b'
+            je .spec_binary
+
             jmp .spec_none
 
             .spec_percent:          ; %%
@@ -96,18 +115,60 @@ my_printf_cdecl:
 
             .spec_char:             ; %c
                 inc  rdi
-                mov  r15, rdi
 
                 add  rbp, 8         ; getting new argument
-                lea  rdi, 8[rbp]    ; pointer to char
+                mov  sil, [rbp + 8] ; char
                 call printf_putc    ; writing it to the buffer
 
-                mov  rdi, r15
                 inc  r12
                 jmp  .print_loop
+
+
+            .spec_hex:
+                inc  rdi
+                mov  r15, rdi
+
+                add  rbp, 8
+                mov  rdi, [rbp+8]
+                mov  rcx, 4
+                call printf_base2n
+
+                mov  rdi, r15
+                add  r12, rax
+
+                jmp  .print_loop 
+
+            .spec_octal:
+                inc  rdi
+                mov  r15, rdi
+
+                add  rbp, 8
+                mov  rdi, [rbp+8]
+                mov  rcx, 3
+                call printf_base2n
+
+                mov  rdi, r15
+                add  r12, rax
+
+                jmp  .print_loop 
+
+            .spec_binary:
+                inc  rdi
+                mov  r15, rdi
+
+                add  rbp, 8
+                mov  rdi, [rbp+8]
+                mov  rcx, 1
+                call printf_base2n
+
+                mov  rdi, r15
+                add  r12, rax
+
+                jmp  .print_loop 
+
             .spec_none:
-                cmp BYTE [rdi], 0
-                je  .loop_end       ; no specificator after %
+                cmp  sil, 0
+                je   .loop_end       ; no specificator after %
 
                 inc rdi             ; skipping character
 
@@ -120,10 +181,11 @@ my_printf_cdecl:
 
     mov rax, r12    ; number of symbols written
     
-
+    pop r13
     pop r14
     pop r15
     pop r12
+    pop rbx
     pop rbp
     ret
 
@@ -133,13 +195,14 @@ my_printf_cdecl:
 ; Print string from rdi
 ; Arg: rdi - string addr
 ; Ret: rax - string len
-; Destr: rax, rcx, rsi, rdx
+; Destr: syscall \ {rdi, rsi} + r14 + r13 
 ;============================================================
 printf_string:
     call printf_flushBuffer ; unoptimal implementation
 
     call strlen   ; rax = strlen(rdi)
     mov  r14, rax
+    mov  r13, rsi
 
     mov  rsi, rdi ; string ptr
     mov  rdx, rax ; length
@@ -149,28 +212,78 @@ printf_string:
     syscall
 
     mov  rdi, rsi ; restoring rdi
+    mov  rsi, r13
     mov  rax, r14 ; restoring length in rax
     ret
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+;============================================================
+; Print unsigned number in hex, octal and binary
+; Arg: edi - number
+;      cl  - number of bits per digit
+; Ret: rax - number of printed chars 
+; Destr: syscall, rbx, r14
+;============================================================
+printf_base2n:
+    mov  rdx, 1
+    shl  rdx, cl     
+    dec  rdx     ; mask for digit: (1 << cl ) - 1
+
+    xor  rax, rax    ; rax = 0
+
+    .convert_loop:
+
+        mov  ebx, edi
+        and  ebx, edx    ; ebx = edi & (1 << cl)
+    
+        cmp  ebx, 9      ; if digit <= 9
+        jbe   .mov_digit    ; digit is ready to print
+        
+        add  ebx, 'A' - '0' - 10 ; hex digit
+
+        .mov_digit:
+
+        add  ebx, '0'   
+        mov  numberBuffer[rax], bl
+        inc  rax
+
+        shr  edi, cl     ; edi >> cl
+        test edi, edi    ; if edi != 0 jmp loop start
+        jnz  .convert_loop
+
+
+    mov rcx, rax    ; loop index
+    mov rdi, rax    ; saving rax
+    ; rcx > 0 
+    .print_loop:
+        mov  sil, BYTE numberBuffer[rcx-1]
+        mov  r14, rcx 
+        call printf_putc
+        mov  rcx, r14
+
+        loop .print_loop
+
+    mov rax, rdi   ; return value = number of chars
+    ret
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
 
 ;============================================================
-; Puts character in printf buffer and flushes buffer it is full
-; Arg:  rdi - ptr to char
-; Destr: rax, rcx, r10, rsi, rdx
+; Puts character in printf buffer and flushes buffer if it is full
+; Arg: sil - char  
+; Destr: syscall \ {rdi, rsi}
 ;============================================================
 printf_putc:
     cmp WORD [printfBufPos], PRINTF_BUFFER_LEN
-    jne .skipFlush
-
+    jb .skipFlush
     call printf_flushBuffer
 
     .skipFlush:
 
     movzx rax, WORD [printfBufPos]
     inc  WORD [printfBufPos]
-    mov  r10b, BYTE [rdi]
-    mov  BYTE printfBuffer[rax], r10b   ; write symbol to buffer
+    mov  BYTE printfBuffer[rax], sil   ; write symbol to buffer
     
     ret
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -178,18 +291,20 @@ printf_putc:
 ;============================================================
 ; Flush printf buffer
 ; Arg: none
-; Destr: rax, rcx, rsi, rdx
+; Destr: sycacll \ {rsi, rdi}
 ;============================================================
 printf_flushBuffer:
     push rdi    ;saving rdi
+    push rsi 
 
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, printfBuffer
-    mov rdx, [printfBufPos]
+    mov  rax, 1
+    mov  rdi, 1
+    lea  rsi, printfBuffer
+    movzx rdx, WORD [printfBufPos]
     syscall   ; flushing buffer
-    mov WORD [printfBufPos], 0 
+    mov  WORD [printfBufPos], 0 
 
+    pop rsi
     pop rdi     ; restoring rdi
 
     ret
@@ -218,5 +333,6 @@ strlen:
 
 
 section .bss
+    numberBuffer: resb 32                     ; buffer for creating numbers
     printfBuffer: resb PRINTF_BUFFER_LEN      ; printf buffer
     printfBufPos: resw 1                      ; position in buffer 
