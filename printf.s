@@ -70,7 +70,9 @@ my_printf_cdecl:
             je .spec_percent
             cmp BYTE [rdi], 's'
             je .spec_string
-
+            cmp BYTE [rdi], 'c'
+            je .spec_char
+            
             jmp .spec_none
 
             .spec_percent:          ; %%
@@ -78,19 +80,35 @@ my_printf_cdecl:
                 inc  r12
                 inc  rdi        
                 
-                jmp .print_loop
+                jmp  .print_loop
 
             .spec_string:           ; %s
                 inc  rdi
-                add  rbp, 8         ; getting new argument from stack
                 mov  r15, rdi       ; saving rdi
+
+                add  rbp, 8         ; getting new argument from stack
                 mov  rdi, [rbp+8]   ; string ptr
                 call printf_string  ; printing string
+
                 mov  rdi, r15       ; restoring rdi
                 add  r12, rax       ; adding rax printed characters to rcx
-                jmp .print_loop
+                jmp  .print_loop
 
+            .spec_char:             ; %c
+                inc  rdi
+                mov  r15, rdi
+
+                add  rbp, 8         ; getting new argument
+                lea  rdi, 8[rbp]    ; pointer to char
+                call printf_putc    ; writing it to the buffer
+
+                mov  rdi, r15
+                inc  r12
+                jmp  .print_loop
             .spec_none:
+                cmp BYTE [rdi], 0
+                je  .loop_end       ; no specificator after %
+
                 inc rdi             ; skipping character
 
                 jmp .print_loop
@@ -99,7 +117,7 @@ my_printf_cdecl:
     .loop_end:
 
     call printf_flushBuffer
-    
+
     mov rax, r12    ; number of symbols written
     
 
@@ -188,7 +206,7 @@ strlen:
     mov rax, rdi
     .str_loop:
         cmp  BYTE [rax], 0
-        jz  .loop_end
+        je  .loop_end
 
         inc  rax
         jmp .str_loop
