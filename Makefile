@@ -1,6 +1,6 @@
 main.exe: build/printf.o build/main.o
 	gcc -no-pie -o $@  $^ 
-	objdump -D main.exe > main.disasm 
+	objdump -D -Mintel main.exe > main.disasm 
 
 build/printf.o: printf.s
 	nasm -f elf64  -l $<.lst $< -o $@

@@ -123,48 +123,32 @@ my_printf_cdecl:
                 inc  r12
                 jmp  .print_loop
 
-
+            ;--------
             .spec_hex:
-                inc  rdi
-                mov  r15, rdi
-
-                add  rbp, 8
-                mov  rdi, [rbp+8]
-                mov  rcx, 4
-                call printf_base2n
-
-                mov  rdi, r15
-                add  r12, rax
-
-                jmp  .print_loop 
+                mov  rcx, 4             ; 1 digit = 4 bits
+                jmp  .spec_base2n_number
 
             .spec_octal:
-                inc  rdi
-                mov  r15, rdi
-
-                add  rbp, 8
-                mov  rdi, [rbp+8]
-                mov  rcx, 3
-                call printf_base2n
-
-                mov  rdi, r15
-                add  r12, rax
-
-                jmp  .print_loop 
+                mov  rcx, 3             ; 1 digit = 3 bits
+                jmp  .spec_base2n_number
 
             .spec_binary:
-                inc  rdi
+                mov  rcx, 1             ; 1 digit = 1 bit
+                jmp  .spec_base2n_number
+
+            .spec_base2n_number:
                 mov  r15, rdi
 
                 add  rbp, 8
                 mov  rdi, [rbp+8]
-                mov  rcx, 1
                 call printf_base2n
 
                 mov  rdi, r15
+                inc  rdi
                 add  r12, rax
 
                 jmp  .print_loop 
+            ;--------
 
             .spec_none:
                 cmp  sil, 0
@@ -195,25 +179,85 @@ my_printf_cdecl:
 ; Print string from rdi
 ; Arg: rdi - string addr
 ; Ret: rax - string len
-; Destr: syscall \ {rdi, rsi} + r14 + r13 
+; Destr: syscall + r14 + r13 + rbx
 ;============================================================
 printf_string:
-    call printf_flushBuffer ; unoptimal implementation
 
     call strlen   ; rax = strlen(rdi)
-    mov  r14, rax
-    mov  r13, rsi
+    movzx rcx, WORD [printfBufPos]
 
-    mov  rsi, rdi ; string ptr
-    mov  rdx, rax ; length
-    mov  rax, 1   ; syscall write
-    mov  rdi, 1   ; stdout
+    mov rbx, PRINTF_BUFFER_LEN
+    sub rbx, rcx    ; rbx = PRINTF_BUFFER_LEN - printfBufPos = free space
 
-    syscall
+    cmp  rax, rbx
+    ja   .NOT_ENOUGH_SPACE
+        ; copying string to buffer
+        
+        lea  rsi, printfBuffer[rcx] 
+        xchg rsi, rdi   ; rsi = string addr(source), rdi = printfBuffer + printBufPos (destination)
+        mov  rcx, rax   ; length = rax
 
-    mov  rdi, rsi ; restoring rdi
-    mov  rsi, r13
-    mov  rax, r14 ; restoring length in rax
+        call memncpy    ; it destroys rax by doing mov rax, rcx; but rcx = rax
+        add  WORD [printfBufPos], ax
+
+        ret
+
+    .NOT_ENOUGH_SPACE:
+        
+        mov  r14, rax
+        cmp  rax, PRINTF_BUFFER_LEN
+        ja   .LONG_STRING
+        ; copying part of string to the buffer, flushing it and copying left part
+
+        lea  rsi, printfBuffer[rcx]
+        xchg rsi, rdi
+        mov  rcx, rbx
+        call memncpy
+        add  WORD [printfBufPos], bx
+
+        call printf_flushBuffer 
+
+        add  rsi, rbx  ; first rbx characters are copied  
+        lea  rdi, printfBuffer
+        mov  rcx, r14
+        sub  rcx, rbx  ; rcx = length - rbx
+        call memncpy
+        add  WORD [printfBufPos], ax
+
+        jmp .end
+
+        .LONG_STRING:
+        ; flushing buffer and printing all string with one syscall
+
+        call printf_flushBuffer ; 
+        
+        mov  rsi, rdi   ; string addr
+        mov  rdx, r14   ; length
+        mov  rax, 1     ; write
+        mov  rdi, 1     ; to stdout
+
+        syscall
+
+        .end:
+        mov  rax, r14 ; restoring length in rax
+        ret
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+;============================================================
+; Memncpy
+; Arg: rdi - destination
+;      rsi - source
+;      rcx - number of bytes to copy
+; Destr: rax, rcx (actually rax = rcx )
+;============================================================
+memncpy:
+    mov  rax, rcx
+
+    cld
+    rep movsb ;<-- may be SLOW on small data, but it looks nice
+
+    sub  rdi, rax
+    sub  rsi, rax
     ret
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
