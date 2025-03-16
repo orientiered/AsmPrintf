@@ -72,27 +72,20 @@ my_printf_cdecl:
 
         .argument:
             inc rdi
-            mov sil, BYTE [rdi]
+            movzx rsi, BYTE [rdi]
 
             cmp sil, '%'
             je .spec_percent
 
-            cmp sil, 's'
-            je .spec_string
+            sub sil, 'a'   ; sil -= 'a'
+            jb .spec_none  ; spec < 'a'
 
-            cmp sil, 'c'
-            je .spec_char
+            cmp sil, 'z' - 'a'
+            ja .spec_none  ; spec > 'z'
 
-            cmp sil, 'x'
-            je .spec_hex
 
-            cmp sil, 'o'
-            je .spec_octal
+            jmp printfSwitchJmpTable[rsi*8]    ; switch
 
-            cmp sil, 'b'
-            je .spec_binary
-
-            jmp .spec_none
 
             .spec_percent:          ; %%
                 call printf_putc    ; writing %
@@ -123,6 +116,18 @@ my_printf_cdecl:
                 inc  r12
                 jmp  .print_loop
 
+            .spec_decimal:
+                mov  r15, rdi
+
+                add  rbp, 8
+                mov  rdi, [rbp+8]
+                ; call printf_decimal
+
+                add  r12, rax
+                mov  rdi, r15
+                inc  rdi
+                jmp  .print_loop
+
             ;--------
             .spec_hex:
                 mov  rcx, 4             ; 1 digit = 4 bits
@@ -151,12 +156,7 @@ my_printf_cdecl:
             ;--------
 
             .spec_none:
-                cmp  sil, 0
-                je   .loop_end       ; no specificator after %
-
-                inc rdi             ; skipping character
-
-                jmp .print_loop
+                jmp .loop_end   ; unsoppurted specifier stops printing
 
 
     .loop_end:
@@ -374,6 +374,26 @@ strlen:
     sub rax, rdi ; rax = strlen
     ret
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+section .rodata
+    align 8
+
+    printfSwitchJmpTable:
+    dq my_printf_cdecl.spec_none    ; a - default
+    dq my_printf_cdecl.spec_binary  ; b - binary
+    dq my_printf_cdecl.spec_char    ; c - char
+    dq my_printf_cdecl.spec_decimal ; d - decimal
+    ;e f g h i j k l m n
+    dq 10 dup my_printf_cdecl.spec_none   ; default
+    dq my_printf_cdecl.spec_octal   ; o - octal
+    ; p q r
+    dq 3  dup my_printf_cdecl.spec_none   ; default
+    dq my_printf_cdecl.spec_string  ; s - string
+    ; t v u w
+    dq 4  dup my_printf_cdecl.spec_none   ; default
+    dq my_printf_cdecl.spec_hex     ; x - hexadecimal
+    ; y z
+    dq 2  dup my_printf_cdecl.spec_none
 
 
 section .bss

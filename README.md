@@ -28,8 +28,8 @@ See [main.c](main.c) for more examples
 + `%x` - prints unsigned 32-bit integer in hex,    without leading zeros
 + `%o` - prints unsigned 32-bit integer in octal,  without leading zeros
 + `%b` - prints unsigned 32-bit integer in binary, without leading zeros
-+ `%\0` - handled as end of format string
-+ `%` with any other symbol will be skipped 
++ `%d` - prints signed   32-bit integer as decimal number
++ `%` with any other symbol stops printing  
 
 ## Under the hood
 `my_printf` is actually a trampoline that pushes first 6 argument registers ([System V AMD64 ABI](https://en.wikipedia.org/wiki/X86_calling_conventions#System_V_AMD64_ABI)) to the stack and jumps to `my_printf_cdecl` (local function in `printf.s`) that takes arguments from stack like in `cdecl` call convention. 
