@@ -6,7 +6,7 @@ extern "C" int my_printf(const char *fmt, ...);
 
 int main() {
     // int printed_chars = my_printf("%x = %s, %x = %s\n", 0xEDA, "0xEDA", 0x0BED, "0x0BED"); 
-    int printed_chars = my_printf("7 + 18 = %d, %s %c %s = %d\n", 25, "7", '*', "-8", -56);
+    int printed_chars = my_printf("7 + 18 = %d, %s %c %s = %d\n%s --> %s", 25, "7", '*', "-8", -56, "This is argument from stack", "another one\n");
     // my_printf("%b = -%b, %o = -%o\n %x, %x\n", -52, 52, -52, 52, 0xEDA, 0x0BED); 
     printf("Printed chars: %d\n", printed_chars);
     printed_chars = my_printf("int32_t(%u) = %d\n", -52, -52);

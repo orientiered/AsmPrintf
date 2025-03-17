@@ -14,15 +14,10 @@ my_printf:
     push rcx
     push rdx
     push rsi
-    push rdi
-    push rax
+    ; push rdi      ; rdi = fmt, so no need no push it
+    push rax        ; return address is on top of the stack
 
-    ; push rax ; return address is on top of the stack
-    ;TODO: turn call into jump
-    call my_printf_cdecl
-    pop  rdi        ; caller ret address
-    add  rsp, 6*8   ;fixing stack
-    jmp  rdi        ; returning back to caller
+    jmp  my_printf_cdecl
 ;-----------------------------------------------------------
 
 ;===========================================================
@@ -31,7 +26,7 @@ my_printf:
 ;===========================================================
 my_printf_cdecl:
     push rbp
-    lea  rbp, 16[rsp]   ; caller ret address
+    lea  rbp, 8[rsp]   ; caller ret address
     push rbx
     push r12 ; we will store total number of written symbols in r12
     push r15 
@@ -44,17 +39,20 @@ my_printf_cdecl:
 
     ;     // *c = '%'
     ;     c++;
+    ;     rdi = getArgFromStack()
     ;     switch(c) {
     ;         case 's':
-    ;             puts([rsp+16]);
+    ;             puts(rdi);
     ;             break;
+    ;         case 'd':
+    ;             
     ;         default:
-    ;             break;
-
+    ;             return;
     ;     }
     ;     c++;
     ; }
-    mov rdi, [rbp+8] ;rdi = fmt
+    
+    
     xor r12, r12     ; r12 = 0
     .print_loop:
         mov  sil, BYTE [rdi] ; reading current char    
@@ -66,7 +64,7 @@ my_printf_cdecl:
         je   .argument  
         
         call printf_putc
-        inc  rdi            ; c is not %
+        inc  rdi            ; *rdi is not %
         inc  r12            
         jmp  .print_loop
 
@@ -88,7 +86,7 @@ my_printf_cdecl:
             mov r15, rdi    ; skipping specifier symbol and saving rdi
 
             add rbp, 8      ; getting new argument from stack
-            mov rdi, [rbp+8]
+            mov rdi, [rbp]
 
             push .epilogue  ; return address
 
@@ -103,23 +101,22 @@ my_printf_cdecl:
                 
                 jmp  .print_loop
 
-            .spec_none:
-                jmp .loop_end   ; unsoppurted specifier stops printing
             ;---------------------------------------------------------------
 
-            .spec_string:           ; %s
-                jmp printf_string  ; printing string
+            ; .spec_string:           ; %s      <-- redundant jump
+                ; jmp printf_string  ; printing string
+
+            ; .spec_decimal:           %d, redundant jump
+                ; jmp printf_decimal
+
+            ; .spec_unsigned:          %u, redunadant jump
+                ; jmp printf_unsigned
 
             .spec_char:             ; %c
                 mov  sil, dil       ; char
                 inc  r12
                 jmp  printf_putc    ; writing it to the buffer
 
-            .spec_decimal:
-                jmp printf_decimal
-
-            .spec_unsigned:
-                jmp printf_unsigned
 
             .spec_hex:
                 mov  rcx, 4             ; 1 digit = 4 bits
@@ -137,22 +134,27 @@ my_printf_cdecl:
 
         ;epilogue
             .epilogue:
-            mov  rdi, r15   ; restoring rdi
-            jmp .print_loop
+            mov   rdi, r15   ; restoring rdi
+            jmp  .print_loop
 
+    .spec_none:     ; unsupported specifier = end of printing
     .loop_end:
 
-    call printf_flushBuffer
+    call  printf_flushBuffer
 
-    mov rax, r12    ; number of symbols written
+    mov  rax, r12    ; number of symbols written
     
-    pop r13
-    pop r14
-    pop r15
-    pop r12
-    pop rbx
-    pop rbp
-    ret
+    pop  r13
+    pop  r14
+    pop  r15
+    pop  r12
+    pop  rbx
+    pop  rbp
+
+
+    pop  rdi        ; caller ret address
+    add  rsp, 5*8   ;fixing stack
+    jmp  rdi        ; returning back to caller
 
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -382,7 +384,7 @@ printf_putc:
 ;============================================================
 ; Flush printf buffer
 ; Arg: none
-; Destr: sycacll \ {rsi, rdi}
+; Destr: syscall \ {rsi, rdi}
 ;============================================================
 printf_flushBuffer:
     push rdi    ;saving rdi
@@ -429,16 +431,16 @@ section .rodata
     dq my_printf_cdecl.spec_none    ; a - default
     dq my_printf_cdecl.spec_binary  ; b - binary
     dq my_printf_cdecl.spec_char    ; c - char
-    dq my_printf_cdecl.spec_decimal ; d - decimal
+    dq printf_decimal               ; d - decimal
     ;e f g h i j k l m n
     dq 10 dup my_printf_cdecl.spec_none   ; default
     dq my_printf_cdecl.spec_octal   ; o - octal
     ; p q r
     dq 3  dup my_printf_cdecl.spec_none   ; default
-    dq my_printf_cdecl.spec_string  ; s - string
+    dq printf_string                ; s - string
     ; t  
     dq my_printf_cdecl.spec_none   ; default
-    dq my_printf_cdecl.spec_unsigned ; u - unsigned
+    dq printf_unsigned             ; u - unsigned
     ; v w
     dq 2  dup my_printf_cdecl.spec_none   ; default
 
