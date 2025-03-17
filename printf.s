@@ -1,7 +1,58 @@
 section .text
 
 global my_printf
+extern atexit   ; for end-to-end printf buffer
 PRINTF_BUFFER_LEN equ 64
+
+
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+; See memncpy
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+%macro MACRO_memncpy 0
+    mov  rax, rcx
+    cld
+    rep  movsb
+
+    sub  rdi, rax
+    sub  rsi, rax
+%endmacro
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+; See printf_putc
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+%macro MACRO_printf_putc 0
+    cmp WORD [printfBufPos], PRINTF_BUFFER_LEN
+    jb .skipFlush
+    call printf_flushBuffer
+
+    .skipFlush:
+
+    movzx rax, WORD [printfBufPos]
+    inc  WORD [printfBufPos]
+    mov  BYTE printfBuffer[rax], sil   ; write symbol to buffer
+    mov  rax, 1
+%endmacro
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+; See strlen
+; Parameter is number of strlen used in current scope
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+%macro MACRO_strlen 1
+    mov rax, rdi
+    .strlen_loop%1:
+        cmp  BYTE [rax], 0
+        je  .loop_strlen_end%1
+
+        inc  rax
+        jmp .strlen_loop%1
+    .loop_strlen_end%1:
+
+    sub rax, rdi ; rax = strlen
+%endmacro
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 
 ;==========================================================
 ; Printf trampoline
@@ -33,6 +84,24 @@ my_printf_cdecl:
     push r14
     push r13
 
+
+    ; registering printf_flushBuffer to execute at exit
+    cmp  BYTE [printfHasRegisteredAtexit], 0
+    jne  .skipRegistering
+
+    mov  r15, rdi
+
+    mov  rdi, printf_flushBuffer
+    call atexit
+
+    mov  rdi, r15
+
+    dec BYTE [printfHasRegisteredAtexit]
+
+    .skipRegistering:
+
+
+
     ; for (const char *c = fmt; c; c++) {
     ;     if (*c != '%')
     ;         putc(*c);
@@ -63,7 +132,8 @@ my_printf_cdecl:
         cmp  sil, '%'
         je   .argument  
         
-        call printf_putc
+        MACRO_printf_putc
+
         inc  rdi            ; *rdi is not %
         inc  r12            
         jmp  .print_loop
@@ -75,11 +145,11 @@ my_printf_cdecl:
             cmp sil, '%'
             je .spec_percent
 
-            sub sil, 'a'   ; sil -= 'a'
-            jb .spec_none  ; spec < 'a'
+            sub sil, 'b'   ; sil -= 'b'
+            jb .spec_none  ; spec < 'b'
 
-            cmp sil, 'z' - 'a'
-            ja .spec_none  ; spec > 'z'
+            cmp sil, 'x' - 'a'
+            ja .spec_none  ; spec > 'x'
 
         ; preambule
             inc rdi
@@ -95,7 +165,7 @@ my_printf_cdecl:
             ;---------------------------------------------------------------
             ; this case is handled separately (not presented in jmp table) 
             .spec_percent:          ; %%
-                call printf_putc    ; writing %
+                call printf_putc   ; writing %
                 inc  r12
                 inc  rdi        
                 
@@ -140,7 +210,7 @@ my_printf_cdecl:
     .spec_none:     ; unsupported specifier = end of printing
     .loop_end:
 
-    call  printf_flushBuffer
+    ; call  printf_flushBuffer
 
     mov  rax, r12    ; number of symbols written
     
@@ -166,7 +236,7 @@ my_printf_cdecl:
 ;============================================================
 printf_string:
 
-    call strlen   ; rax = strlen(rdi)
+    MACRO_strlen 1  ; rax = strlen(rdi)
     add  r12, rax 
     movzx rcx, WORD [printfBufPos]
 
@@ -181,7 +251,7 @@ printf_string:
         xchg rsi, rdi   ; rsi = string addr(source), rdi = printfBuffer + printBufPos (destination)
         mov  rcx, rax   ; length = rax
 
-        call memncpy    ; it destroys rax by doing mov rax, rcx; but rcx = rax
+        MACRO_memncpy    ; it destroys rax by doing mov rax, rcx; but rcx = rax
         add  WORD [printfBufPos], ax
 
         ret
@@ -196,7 +266,7 @@ printf_string:
         lea  rsi, printfBuffer[rcx]
         xchg rsi, rdi
         mov  rcx, rbx
-        call memncpy
+        MACRO_memncpy
         add  WORD [printfBufPos], bx
 
         call printf_flushBuffer 
@@ -205,10 +275,10 @@ printf_string:
         lea  rdi, printfBuffer
         mov  rcx, r14
         sub  rcx, rbx  ; rcx = length - rbx
-        call memncpy
+        MACRO_memncpy
         add  WORD [printfBufPos], ax
 
-        jmp .end
+        ret
 
         .LONG_STRING:
         ; flushing buffer and printing all string with one syscall
@@ -281,7 +351,7 @@ printf_unsigned:
     .print_loop:
         mov  sil, BYTE numberBuffer[rcx-1]
         mov  rdi, rcx
-        call printf_putc
+        MACRO_printf_putc
         mov  rcx, rdi
 
         loop .print_loop 
@@ -317,6 +387,7 @@ memncpy:
 ; Ret: r12 += number of printed chars 
 ; Destr: syscall, rbx, r14
 ;============================================================
+; TODO: add digit mask argument 
 printf_base2n:
     mov  rdx, 1
     shl  rdx, cl     
@@ -328,7 +399,8 @@ printf_base2n:
 
         mov  ebx, edi
         and  ebx, edx    ; ebx = edi & (1 << cl)
-    
+
+    ; !!! DO table with 0123456789abcdef    
         cmp  ebx, 9      ; if digit <= 9
         jbe   .mov_digit    ; digit is ready to print
         
@@ -351,7 +423,7 @@ printf_base2n:
     .print_loop:
         mov  sil, BYTE numberBuffer[rcx-1]
         mov  r14, rcx 
-        call printf_putc
+        MACRO_printf_putc
         mov  rcx, r14
 
         loop .print_loop
@@ -424,32 +496,35 @@ strlen:
     ret
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+
+
 section .rodata
     align 8
 
     printfSwitchJmpTable:
-    dq my_printf_cdecl.spec_none    ; a - default
     dq my_printf_cdecl.spec_binary  ; b - binary
     dq my_printf_cdecl.spec_char    ; c - char
     dq printf_decimal               ; d - decimal
     ;e f g h i j k l m n
-    dq 10 dup my_printf_cdecl.spec_none   ; default
+    dq 'o'-'d' - 1 dup my_printf_cdecl.spec_none   ; default
     dq my_printf_cdecl.spec_octal   ; o - octal
     ; p q r
-    dq 3  dup my_printf_cdecl.spec_none   ; default
+    dq 's'-'o' - 1  dup my_printf_cdecl.spec_none   ; default
     dq printf_string                ; s - string
     ; t  
     dq my_printf_cdecl.spec_none   ; default
     dq printf_unsigned             ; u - unsigned
     ; v w
-    dq 2  dup my_printf_cdecl.spec_none   ; default
+    dq 'x'-'u' - 1  dup my_printf_cdecl.spec_none   ; default
 
     dq my_printf_cdecl.spec_hex     ; x - hexadecimal
-    ; y z
-    dq 2  dup my_printf_cdecl.spec_none
 
 
 section .bss
+; make flag for atexit
+; use only for static buffer, otherwise allocate on stack 
     numberBuffer: resb 32                     ; buffer for creating numbers
     printfBuffer: resb PRINTF_BUFFER_LEN      ; printf buffer
-    printfBufPos: resw 1                      ; position in buffer 
+    printfBufPos: resw 1                      ; position in buffer
+
+    printfHasRegisteredAtexit: resb 1         ;  
