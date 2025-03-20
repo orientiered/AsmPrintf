@@ -1,6 +1,7 @@
 section .text
 
 global my_printf
+global my_printf_flush
 extern atexit   ; for end-to-end printf buffer
 PRINTF_BUFFER_LEN equ 64
 
@@ -190,14 +191,17 @@ my_printf_cdecl:
 
             .spec_hex:
                 mov  rcx, 4             ; 1 digit = 4 bits
+                mov  rdx, 0xF           ; mask = 0b1111
                 jmp  printf_base2n
 
             .spec_octal:
                 mov  rcx, 3             ; 1 digit = 3 bits
+                mov  rdx, 0x7           ; mask = 0b111
                 jmp  printf_base2n
 
             .spec_binary:
                 mov  rcx, 1             ; 1 digit = 1 bit
+                mov  rdx, 0x1
                 jmp  printf_base2n
 
 
@@ -322,7 +326,6 @@ printf_decimal:
 ;============================================================
 ; Print unsigned 32-bit integer
 ;   edi - number
-;   r13 - expects to be 0 or 1 (if print_decimal printed -)
 ; Ret:
 ;   r12 += number of chars written
 ; Destr: syscall, r14
@@ -384,34 +387,27 @@ memncpy:
 ; Print unsigned number in hex, octal and binary
 ; Arg: edi - number
 ;      cl  - number of bits per digit
+;      dl  - mask for digit
 ; Ret: r12 += number of printed chars 
 ; Destr: syscall, rbx, r14
 ;============================================================
 ; TODO: add digit mask argument 
 printf_base2n:
-    mov  rdx, 1
-    shl  rdx, cl     
-    dec  rdx     ; mask for digit: (1 << cl ) - 1
-
     xor  rax, rax    ; rax = 0
 
+    ; Converting number to array of digits in the numberBuffer in reverse order
     .convert_loop:
 
         mov  ebx, edi
+        ; Getting digit from number
         and  ebx, edx    ; ebx = edi & (1 << cl)
-
-    ; !!! DO table with 0123456789abcdef    
-        cmp  ebx, 9      ; if digit <= 9
-        jbe   .mov_digit    ; digit is ready to print
-        
-        add  ebx, 'A' - '0' - 10 ; hex digit
-
-        .mov_digit:
-
-        add  ebx, '0'   
+        ; Converting it to the symbol
+        mov  bl, BYTE digitsTable[ebx]
+        ; Storing symbol in buffer
         mov  numberBuffer[rax], bl
         inc  rax
 
+        ; Removing digit from number
         shr  edi, cl     ; edi >> cl
         test edi, edi    ; if edi != 0 jmp loop start
         jnz  .convert_loop
@@ -420,6 +416,8 @@ printf_base2n:
     add  r12, rax
     mov  rcx, rax    ; loop index
     ; rcx > 0 
+
+    ; Printing digits from numberBuffer in reverse order
     .print_loop:
         mov  sil, BYTE numberBuffer[rcx-1]
         mov  r14, rcx 
@@ -458,6 +456,8 @@ printf_putc:
 ; Arg: none
 ; Destr: syscall \ {rsi, rdi}
 ;============================================================
+; synonym for use in C program
+my_printf_flush:
 printf_flushBuffer:
     push rdi    ;saving rdi
     push rsi 
@@ -500,7 +500,8 @@ strlen:
 
 section .rodata
     align 8
-
+    ; Printf jump table
+    ;-------------------------------------------------
     printfSwitchJmpTable:
     dq my_printf_cdecl.spec_binary  ; b - binary
     dq my_printf_cdecl.spec_char    ; c - char
@@ -518,7 +519,9 @@ section .rodata
     dq 'x'-'u' - 1  dup my_printf_cdecl.spec_none   ; default
 
     dq my_printf_cdecl.spec_hex     ; x - hexadecimal
+    ;---------------------------------------------------
 
+    digitsTable db '0123456789ABCDEF'
 
 section .bss
 ; make flag for atexit
