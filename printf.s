@@ -6,6 +6,27 @@ extern atexit   ; for end-to-end printf buffer
 PRINTF_BUFFER_LEN equ 64
 
 
+;@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+; TODO List:
+;   Float implementation:
+;       1. Figure out how to push float arguments in stack
+;           Made separate stack for float arguments (push them after integer arguments) (original printf does just that)
+;          
+;           System V says that in rax will be number of float arguments, so you can skip pushing floats
+;       2. Add '%f' and corresponding jump in jump table
+;
+;       3. Conversion function
+;           Print sign and clear it x -> |x|
+;           a = int(x) print(a)
+;           x -= float(a)
+;           x *= 10^precision
+;           print('.')
+;           b = int(x) print(b)
+;
+;           
+;
+;@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ; See memncpy
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -204,7 +225,10 @@ my_printf_cdecl:
                 mov  rdx, 0x1
                 jmp  printf_base2n
 
-
+            .spec_float:
+                sub rbp, 8  ; register from different stack
+                ; currently prints only one argument from xmm0
+                jmp printf_float
 
         ;epilogue
             .epilogue:
@@ -477,6 +501,71 @@ printf_flushBuffer:
 
 
 ;============================================================
+; Print float number
+; Arg: 
+;   xmm0 - arg
+; Ret:
+;   r12 += number of written chars
+; Destr: 
+;============================================================
+printf_float:
+; Saving state of MXCSR register and chaning rounding mode
+    sub  rsp, 8
+    stmxcsr [rsp]
+    stmxcsr [rsp+4]
+    mov WORD [rsp+4], 0x7000    ; TOWARDS ZERO ROUNDING MODE
+    ldmxcsr [rsp+4]
+
+
+; Checking sign of given number
+    
+    pextrb eax, xmm0, 7 ; extracting high byte with sign bit
+    test   ax,  0x80    ; checking sign bit
+    jz   .skipMinus
+
+        mov  sil, '-'
+        call printf_putc
+        inc  r12
+
+        pand xmm0, [FLOAT_REMOVE_SIGN_MASK]
+    .skipMinus:
+
+    cvtsd2si rdi,  xmm0 ; rdi = int(x)
+    cvtsi2sd xmm1, rdi  ; 
+    
+    call printf_decimal
+
+    mov  sil, '.'
+    call printf_putc
+    inc  r12
+
+    sub  rsp, 8 
+    xor  rcx, rcx
+
+    .convert_loop:
+        inc  rcx
+        subsd    xmm0, xmm1 ; x -= int(x)
+        mulsd    xmm0, [FLOAT_10]
+        cvtsd2si rdi, xmm0  
+        cvtsi2sd xmm1, rdi
+
+        mov  dil, BYTE digitsTable[rdi] ; rdi = ascii digit
+        mov  BYTE [rsp + rcx - 1], dil
+        cmp  rcx, 7
+        jb   .convert_loop
+
+    mov  BYTE [rsp + rcx], 0 ; end of string   
+    mov  rdi, rsp
+    call printf_string
+
+    ldmxcsr [rsp+8]
+    add  rsp, 16
+
+    ret
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+;============================================================
 ; Strlen for c strings
 ; Args: rdi - string address
 ; Ret:  rax - length of string
@@ -506,8 +595,10 @@ section .rodata
     dq my_printf_cdecl.spec_binary  ; b - binary
     dq my_printf_cdecl.spec_char    ; c - char
     dq printf_decimal               ; d - decimal
-    ;e f g h i j k l m n
-    dq 'o'-'d' - 1 dup my_printf_cdecl.spec_none   ; default
+    dq my_printf_cdecl.spec_none    ; e - none
+    dq my_printf_cdecl.spec_float    ; f - float
+    ;g h i j k l m n
+    dq 'o'-'f' - 1 dup my_printf_cdecl.spec_none   ; default
     dq my_printf_cdecl.spec_octal   ; o - octal
     ; p q r
     dq 's'-'o' - 1  dup my_printf_cdecl.spec_none   ; default
@@ -522,6 +613,8 @@ section .rodata
     ;---------------------------------------------------
 
     digitsTable db '0123456789ABCDEF'
+    FLOAT_REMOVE_SIGN_MASK db 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F
+    FLOAT_10    dq 10.0 
 
 section .bss
 ; make flag for atexit

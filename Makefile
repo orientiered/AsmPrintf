@@ -5,7 +5,7 @@ main.exe: build/printf.o build/main.o
 build/printf.o: printf.s
 	nasm -f elf64  -l $<.lst $< -o $@
 
-build/main.o: main.c
+build/main.o: main.cpp
 	g++ -Og -c $< -o $@
 
 .PHONY:clean
