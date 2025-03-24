@@ -114,48 +114,29 @@ my_printf:
 my_printf_cdecl:
     push rbp
     lea  rbp, 8*8+16[rsp]   ; first integer argument in stack
+
     push rbx
     push r12 ; we will store total number of written symbols in r12
-    push r15 
+    push r15 ; this register is often used to save rdi
     push r14
     push r13
 
 
     ; registering printf_flushBuffer to execute at exit
-    cmp  BYTE [printfHasRegisteredAtexit], 0
-    jne  .skipRegistering
+        cmp  BYTE [printfHasRegisteredAtexit], 0
+        jne  .skipRegistering
 
-    mov  r15, rdi
+        mov  r15, rdi
 
-    mov  rdi, printf_flushBuffer
-    call atexit
+        mov  rdi, printf_flushBuffer
+        call atexit
 
-    mov  rdi, r15
+        mov  rdi, r15
 
-    dec BYTE [printfHasRegisteredAtexit]
-
+        dec BYTE [printfHasRegisteredAtexit]
     .skipRegistering:
 
-
-
-    ; for (const char *c = fmt; c; c++) {
-    ;     if (*c != '%')
-    ;         putc(*c);
-
-    ;     // *c = '%'
-    ;     c++;
-    ;     rdi = getArgFromStack()
-    ;     switch(c) {
-    ;         case 's':
-    ;             puts(rdi);
-    ;             break;
-    ;         case 'd':
-    ;             
-    ;         default:
-    ;             return;
-    ;     }
-    ;     c++;
-    ; }
+    lea  r10, 16+5*8[rsp]       ; first float register in stack
     
     
     xor r12, r12     ; r12 = 0
@@ -240,8 +221,9 @@ my_printf_cdecl:
                 jmp  printf_base2n
 
             .spec_float:
-                sub rbp, 8  ; register from different stack
-                ; currently prints only one argument from xmm0
+                sub  rbp, 8       ; register from different stack
+                movq xmm0, [r10]  ; argument in xmm0   
+                add  r10, 8       ; shifting pointer
                 jmp printf_float
 
         ;epilogue
@@ -274,7 +256,7 @@ my_printf_cdecl:
 ; Print string from rdi
 ; Arg: rdi - string addr
 ; Ret: r12 += number of chars written
-; Destr: syscall + r14 + rbx
+; Destr: caller-saved \ {r10, r11} + r14 + rbx
 ;============================================================
 printf_string:
 
@@ -342,7 +324,7 @@ printf_string:
 ; Print decimal 32bit number from edi
 ; Arg: edi - number 
 ; Ret: r12 += numbers of characters written
-; Destr: syscall, rbx
+; Destr: caller-saved \ {r10, r11}, rbx, r14
 ;============================================================
 printf_decimal:
 
@@ -366,7 +348,7 @@ printf_decimal:
 ;   edi - number
 ; Ret:
 ;   r12 += number of chars written
-; Destr: syscall, r14
+; Destr: caller-saved \ {r10, r11}, rbx, r14
 ;============================================================
 printf_unsigned:
     mov  eax, edi
@@ -431,7 +413,7 @@ memncpy:
 ;      cl  - number of bits per digit
 ;      dl  - mask for digit
 ; Ret: r12 += number of printed chars 
-; Destr: syscall, rbx, r14
+; Destr: caller-saved \ {r10, r11}, rbx, r14
 ;============================================================
 printf_base2n:
     xor  rax, rax    ; rax = 0
@@ -479,7 +461,7 @@ printf_base2n:
 ; Puts character in printf buffer and flushes buffer if it is full
 ; Arg: sil - char
 ; Ret: rax - number of written chars (1)  
-; Destr: syscall \ {rdi, rsi}
+; Destr: caller-saved \ {rsi, rdi, r10, r11}
 ;============================================================
 printf_putc:
     cmp WORD [printfBufPos], PRINTF_BUFFER_LEN
@@ -498,13 +480,15 @@ printf_putc:
 ;============================================================
 ; Flush printf buffer
 ; Arg: none
-; Destr: syscall \ {rsi, rdi}
+; Destr: caller-saved \ {rsi, rdi, r10, r11}
 ;============================================================
 ; synonym for use in C program
 my_printf_flush:
 printf_flushBuffer:
     push rdi    ;saving rdi
     push rsi 
+    push r10
+    push r11
 
     mov  rax, 1
     mov  rdi, 1
@@ -513,6 +497,8 @@ printf_flushBuffer:
     syscall   ; flushing buffer
     mov  WORD [printfBufPos], 0 
 
+    pop r11
+    pop r10
     pop rsi
     pop rdi     ; restoring rdi
 
@@ -526,17 +512,9 @@ printf_flushBuffer:
 ;   xmm0 - arg
 ; Ret:
 ;   r12 += number of written chars
-; Destr: 
+; Destr: caller-saved \ {r10, r11}, xmm0, xmm1
 ;============================================================
 printf_float:
-; Saving state of MXCSR register and chaning rounding mode
-    sub  rsp, 8
-    stmxcsr [rsp]
-    stmxcsr [rsp+4]
-    mov WORD [rsp+4], 0x7000    ; TOWARDS ZERO ROUNDING MODE
-    ldmxcsr [rsp+4]
-
-
 ; Checking sign of given number
     
     pextrb eax, xmm0, 7 ; extracting high byte with sign bit
@@ -550,8 +528,9 @@ printf_float:
         pand xmm0, [FLOAT_REMOVE_SIGN_MASK]
     .skipMinus:
 
-    cvtsd2si rdi,  xmm0 ; rdi = int(x)
-    cvtsi2sd xmm1, rdi  ; 
+    ; Printing integer part
+    cvttsd2si rdi,  xmm0 ; rdi = int(x) with rounding towards zero
+    cvtsi2sd  xmm1, rdi  ; xmm1  = double(int(x)) 
     
     call printf_decimal
 
@@ -563,10 +542,11 @@ printf_float:
     xor  rcx, rcx
 
     .convert_loop:
+    ; TODO: this loop could be removed: multiply xmm0 by 10^6 and print number with leading zeros 
         inc  rcx
         subsd    xmm0, xmm1 ; x -= int(x)
         mulsd    xmm0, [FLOAT_10]
-        cvtsd2si rdi, xmm0  
+        cvttsd2si rdi, xmm0  
         cvtsi2sd xmm1, rdi
 
         mov  dil, BYTE digitsTable[rdi] ; rdi = ascii digit
@@ -578,8 +558,7 @@ printf_float:
     mov  rdi, rsp
     call printf_string
 
-    ldmxcsr [rsp+8]
-    add  rsp, 16
+    add  rsp, 8
 
     ret
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
