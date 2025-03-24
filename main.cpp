@@ -17,6 +17,8 @@ float fsum(double a, float b) {
 }
 
 int main() {
+    my_printf("%f\n", 52.52);
+
     // int printed_chars = my_printf("%x = %s, %x = %s\n", 0xEDA, "0xEDA", 0x0BED, "0x0BED"); 
     int printed_chars = my_printf("7 + 18 = %d, %s %c %s = %d\n%s --> %s\n%d %s %x %d%%%c%b\n", 25, "7", '*', "-8", -56, 
                                   "This is argument from stack", "another one\n", -1, "love", 3802, 100, 33, 126);
@@ -37,9 +39,7 @@ int main() {
     printf("%f %lf\n", number, -(double) number);
 
     
-    double a = 52.52;
-    float  b = 34.34;
-    b = -4575.6532f;
+    float  b = 52.52;
     scanf("%f", &b);
     my_printf("%f\n", b);
     printf("%f\n", b); 

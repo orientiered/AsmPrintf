@@ -4,7 +4,7 @@ global my_printf
 global my_printf_flush
 extern atexit   ; for end-to-end printf buffer
 PRINTF_BUFFER_LEN equ 64
-
+NUMBER_BUFFER_LEN equ 32
 
 ;@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 ; TODO List:
@@ -82,12 +82,26 @@ PRINTF_BUFFER_LEN equ 64
 ;==========================================================
 my_printf:
     pop  rax        ; saving return address in rax, this register is preserved by caller
+
     push r9         ; argument registers in reverse order 
     push r8
     push rcx
     push rdx
     push rsi
     ; push rdi      ; rdi = fmt, so no need no push it
+
+; TODO: make check if  printf has any float arguments (rax = number of xmm registers used)
+    sub  rsp, 8*8
+    ; Pushing float arguments
+    movq [rsp + 7*8], xmm7
+    movq [rsp + 6*8], xmm6
+    movq [rsp + 5*8], xmm5
+    movq [rsp + 4*8], xmm4
+    movq [rsp + 3*8], xmm3
+    movq [rsp + 2*8], xmm2
+    movq [rsp + 1*8], xmm1
+    movq [rsp + 0*8], xmm0
+
     push rax        ; return address is on top of the stack
 
     jmp  my_printf_cdecl
@@ -99,7 +113,7 @@ my_printf:
 ;===========================================================
 my_printf_cdecl:
     push rbp
-    lea  rbp, 8[rsp]   ; caller ret address
+    lea  rbp, 8*8+16[rsp]   ; first integer argument in stack
     push rbx
     push r12 ; we will store total number of written symbols in r12
     push r15 
@@ -177,8 +191,8 @@ my_printf_cdecl:
             inc rdi
             mov r15, rdi    ; skipping specifier symbol and saving rdi
 
-            add rbp, 8      ; getting new argument from stack
             mov rdi, [rbp]
+            add rbp, 8      ; getting new argument from stack
 
             push .epilogue  ; return address
 
@@ -251,7 +265,7 @@ my_printf_cdecl:
 
 
     pop  rdi        ; caller ret address
-    add  rsp, 5*8   ;fixing stack
+    add  rsp, 5*8 + 8*8  ;fixing stack
     jmp  rdi        ; returning back to caller
 
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -360,13 +374,15 @@ printf_unsigned:
     xor  r14, r14    ; r14 = 0 -> number of written symbols
     xor  rdx, rdx
 
+    sub  rsp, NUMBER_BUFFER_LEN ; buffer for digits
+
     .unsigned_loop: 
         div  rbx
 
         ; rdx = rax % 10
         ; rax = rax / 10
         lea  rsi, [rdx+'0']
-        mov  BYTE numberBuffer[r14], sil
+        mov  BYTE [rsp + r14], sil
         xor  rdx, rdx
         inc  r14
 
@@ -376,13 +392,15 @@ printf_unsigned:
     mov  rcx, r14
     add  r12, r14
     .print_loop:
-        mov  sil, BYTE numberBuffer[rcx-1]
+        mov  sil, BYTE [rsp + rcx-1]
         mov  rdi, rcx
         MACRO_printf_putc
         mov  rcx, rdi
 
         loop .print_loop 
 
+
+    add  rsp, NUMBER_BUFFER_LEN ; fixing stack
 
     ret
 
@@ -415,9 +433,9 @@ memncpy:
 ; Ret: r12 += number of printed chars 
 ; Destr: syscall, rbx, r14
 ;============================================================
-; TODO: add digit mask argument 
 printf_base2n:
     xor  rax, rax    ; rax = 0
+    sub  rsp, NUMBER_BUFFER_LEN  ; creating buffer for symbols
 
     ; Converting number to array of digits in the numberBuffer in reverse order
     .convert_loop:
@@ -428,7 +446,7 @@ printf_base2n:
         ; Converting it to the symbol
         mov  bl, BYTE digitsTable[ebx]
         ; Storing symbol in buffer
-        mov  numberBuffer[rax], bl
+        mov  [rsp + rax], bl
         inc  rax
 
         ; Removing digit from number
@@ -443,13 +461,15 @@ printf_base2n:
 
     ; Printing digits from numberBuffer in reverse order
     .print_loop:
-        mov  sil, BYTE numberBuffer[rcx-1]
+        mov  sil, BYTE [rsp + rcx-1]
         mov  r14, rcx 
         MACRO_printf_putc
         mov  rcx, r14
 
         loop .print_loop
 
+    add  rsp, NUMBER_BUFFER_LEN ; fixing stack
+ 
     ret
 ;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -617,10 +637,7 @@ section .rodata
     FLOAT_10    dq 10.0 
 
 section .bss
-; make flag for atexit
-; use only for static buffer, otherwise allocate on stack 
-    numberBuffer: resb 32                     ; buffer for creating numbers
     printfBuffer: resb PRINTF_BUFFER_LEN      ; printf buffer
     printfBufPos: resw 1                      ; position in buffer
 
-    printfHasRegisteredAtexit: resb 1         ;  
+    printfHasRegisteredAtexit: resb 1         ; flag that is set after calling atexit
